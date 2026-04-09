@@ -1,0 +1,38 @@
+name: Build and push container
+
+on:
+  push:
+    branches: [master]
+    tags: ["v*"]
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+      - name: Generate tags
+        id: tags
+        uses: greboid/docker-tags-action@v6.0.6
+        with:
+          separator: " "
+          fullname: "false"
+          token: ${{ secrets.GITHUB_TOKEN }}
+      - name: Build image
+        id: build-image
+        run: |
+          TAG_ARGS=""
+          for tag in ${{ steps.tags.outputs.tags }}; do
+            TAG_ARGS="${TAG_ARGS} -t ghcr.io/${{ github.repository }}:${tag}"
+          done
+          buildah bud \
+            -f Dockerfile \
+            ${TAG_ARGS} \
+            --timestamp 0 \
+            .
+      - name: Push to GHCR
+        run: |
+          podman login -u '${{ github.repository_owner }}' -p '${{ secrets.GITHUB_TOKEN }}' ghcr.io
+          for tag in ${{ steps.tags.outputs.tags }}; do
+            podman push "ghcr.io/${{ github.repository }}:${tag}"
+          done
