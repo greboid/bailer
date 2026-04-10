@@ -149,6 +149,9 @@ func filterVolumes(mode string, mounts []container.MountPoint, labels map[string
 		if (m.Type != mount.TypeVolume && m.Type != mount.TypeBind) || !m.RW {
 			continue
 		}
+		if m.Destination == "/var/run/docker.sock" {
+			continue
+		}
 		if mode == "exclude" && len(names) > 0 && mountMatches(names, m) {
 			continue
 		}
