@@ -124,9 +124,6 @@ func TestFilterVolumes(t *testing.T) {
 	bindMount := func(dest string) container.MountPoint {
 		return container.MountPoint{Type: mount.TypeBind, Destination: dest, RW: true}
 	}
-	readOnlyMount := func(name string) container.MountPoint {
-		return container.MountPoint{Type: mount.TypeVolume, Name: name, Destination: "/data", RW: false}
-	}
 
 	tests := []struct {
 		name     string
@@ -156,9 +153,6 @@ func TestFilterVolumes(t *testing.T) {
 		{"include wildcard", "include",
 			[]container.MountPoint{volMount("vol1", "/data"), volMount("vol2", "/config")},
 			map[string]string{labelInclude: "*"}, 2},
-		{"filters out read-only", "exclude",
-			[]container.MountPoint{volMount("vol1", "/data"), readOnlyMount("vol2")},
-			nil, 1},
 		{"exclude bind mount by destination", "exclude",
 			[]container.MountPoint{volMount("vol1", "/data"), bindMount("/host/path")},
 			map[string]string{labelExclude: "/host/path"}, 1},

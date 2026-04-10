@@ -122,9 +122,6 @@ func dryRunMode(ctx context.Context, cli dockerAPI, mode string) error {
 			if !willBackup {
 				backupStr = "no (filtered)"
 			}
-			if !m.RW {
-				backupStr = "no (read-only)"
-			}
 			fmt.Printf("%-30s %-20s %-10s %-30s %s\n", name, id, m.Type, m.Destination, backupStr)
 		}
 	}
@@ -146,7 +143,7 @@ func filterVolumes(mode string, mounts []container.MountPoint, labels map[string
 
 	var result []container.MountPoint
 	for _, m := range mounts {
-		if (m.Type != mount.TypeVolume && m.Type != mount.TypeBind) || !m.RW {
+		if m.Type != mount.TypeVolume && m.Type != mount.TypeBind {
 			continue
 		}
 		if m.Destination == "/var/run/docker.sock" {
