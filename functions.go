@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -94,15 +95,25 @@ func dryRunMode(ctx context.Context, cli dockerAPI, mode string) error {
 	fmt.Printf("%-30s %-20s %-10s %-30s %s\n", "CONTAINER", "VOLUME", "TYPE", "DESTINATION", "BACKUP")
 	fmt.Printf("%s\n", strings.Repeat("-", 113))
 
+	type row struct {
+		container string
+		volume    string
+		mountType string
+		dest      string
+		backup    string
+		willBackup bool
+	}
+	var rows []row
+
 	for _, c := range containers {
 		name := containerName(c)
 		if c.State != "running" {
-			fmt.Printf("%-30s %-20s %-10s %-30s %s\n", name, "-", "-", "-", "no (not running)")
+			rows = append(rows, row{name, "-", "-", "-", "no (not running)", false})
 			continue
 		}
 
 		if len(c.Mounts) == 0 {
-			fmt.Printf("%-30s %-20s %-10s %-30s %s\n", name, "-", "-", "-", "no (no mounts)")
+			rows = append(rows, row{name, "-", "-", "-", "no (no mounts)", false})
 			continue
 		}
 
@@ -122,8 +133,19 @@ func dryRunMode(ctx context.Context, cli dockerAPI, mode string) error {
 			if !willBackup {
 				backupStr = "no (filtered)"
 			}
-			fmt.Printf("%-30s %-20s %-10s %-30s %s\n", name, id, m.Type, m.Destination, backupStr)
+			rows = append(rows, row{name, id, string(m.Type), m.Destination, backupStr, willBackup})
 		}
+	}
+
+	sort.Slice(rows, func(i, j int) bool {
+		if rows[i].willBackup != rows[j].willBackup {
+			return rows[i].willBackup
+		}
+		return rows[i].container < rows[j].container
+	})
+
+	for _, r := range rows {
+		fmt.Printf("%-30s %-20s %-10s %-30s %s\n", r.container, r.volume, r.mountType, r.dest, r.backup)
 	}
 
 	return nil
