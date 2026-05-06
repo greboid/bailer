@@ -4,7 +4,7 @@ go 1.26.1
 
 require (
 	github.com/csmith/envflag v1.0.0
-	github.com/csmith/slogflags v1.1.0
+	github.com/csmith/slogflags v1.2.0
 	github.com/docker/docker v28.5.2+incompatible
 )
 
