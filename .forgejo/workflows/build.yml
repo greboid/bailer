@@ -19,7 +19,7 @@ jobs:
       - uses: actions/toolkit/go-setup@master
       - uses: actions/toolkit/docker-login@master
         with:
-          audience: u:1:3d49eeee-778f-42ed-bff2-ebc1fa5ba54d
+          audience: u:1:b4bcb24d-d2d1-43c7-bae9-ae4de46f571d
   container:
     runs-on: alpine
     steps:
