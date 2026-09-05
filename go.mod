@@ -3,7 +3,7 @@ module github.com/greboid/bailer
 go 1.26.1
 
 require (
-	github.com/csmith/envflag v1.0.0
+	github.com/csmith/envflag/v2 v2.0.0
 	github.com/csmith/slogflags v1.2.0
 	github.com/docker/docker v28.5.2+incompatible
 )
