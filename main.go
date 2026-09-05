@@ -8,7 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/csmith/envflag"
+	"github.com/csmith/envflag/v2"
 	"github.com/csmith/slogflags"
 	"github.com/docker/docker/client"
 )
