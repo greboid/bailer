@@ -5,7 +5,7 @@ COPY . /app
 RUN go mod download
 RUN CGO_ENABLED=0 GOOS=linux go build -tags netgo,opusergo -a -trimpath -ldflags='-s -w -extldflags "-static" -buildid=' -o main .
 
-FROM ghcr.io/greboid/dockerbase/root:1.20260305.0
+FROM ghcr.io/greboid/dockerbase/root:1.20260829.0
 
 COPY --from=builder /app/main /bailer
 ENTRYPOINT ["/bailer"]
