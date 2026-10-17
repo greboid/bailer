@@ -18,6 +18,10 @@ const (
 	labelPostBackupCmd = "com.greboid.bailer.post-backup-cmd"
 	labelExclude       = "com.greboid.bailer.exclude"
 	labelInclude       = "com.greboid.bailer.include"
+
+	labelHelperImage   = "com.greboid.bailer.helper-image"
+	labelHelperPreCmd  = "com.greboid.bailer.helper-pre-cmd"
+	labelHelperPostCmd = "com.greboid.bailer.helper-post-cmd"
 )
 
 var (

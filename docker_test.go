@@ -6,15 +6,30 @@ import (
 	"io"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 )
 
 type mockClient struct {
-	containers []container.Summary
-	listErr    error
-	copyCalls  []copyCall
-	execCalls  []execCall
-	execErrs   map[string]error
-	copyErrs   map[string]error
+	containers    []container.Summary
+	listErr       error
+	copyCalls     []copyCall
+	execCalls     []execCall
+	execErrs      map[string]error
+	copyErrs      map[string]error
+	imagesPresent map[string]bool
+	inspectErr    error
+	pullErr       error
+	createErr     error
+	startErr      error
+	waitErr       error
+	waitExitCode  int64
+	removeErr     error
+	inspectCalls  []string
+	pullCalls     []string
+	createCalls   []createCall
+	startCalls    []string
+	waitCalls     []waitCall
+	removeCalls   []string
 }
 
 type copyCall struct {
@@ -25,6 +40,13 @@ type copyCall struct {
 type execCall struct {
 	containerID string
 	cmd         string
+}
+
+type createCall struct {
+	image      string
+	entrypoint []string
+	user       string
+	mounts     []mount.Mount
 }
 
 func (m *mockClient) listContainers(_ context.Context) ([]container.Summary, error) {

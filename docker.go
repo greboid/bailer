@@ -6,6 +6,7 @@ import (
 	"io"
 
 	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
 )
 
@@ -13,6 +14,12 @@ type dockerAPI interface {
 	listContainers(ctx context.Context) ([]container.Summary, error)
 	copyFromContainer(ctx context.Context, containerID, srcPath string) (io.ReadCloser, error)
 	execCommand(ctx context.Context, containerID, cmd string) error
+	imageInspect(ctx context.Context, image string) (image.InspectResponse, error)
+	imagePull(ctx context.Context, image string) (io.ReadCloser, error)
+	containerCreate(ctx context.Context, config container.Config, hostConfig container.HostConfig) (container.CreateResponse, error)
+	containerStart(ctx context.Context, containerID string) error
+	containerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error)
+	containerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
 }
 
 type dockerClient struct {
@@ -60,4 +67,28 @@ func (c dockerClient) execCommand(ctx context.Context, containerID, cmd string) 
 	}
 
 	return nil
+}
+
+func (c dockerClient) imageInspect(ctx context.Context, ref string) (image.InspectResponse, error) {
+	return c.ImageInspect(ctx, ref)
+}
+
+func (c dockerClient) imagePull(ctx context.Context, ref string) (io.ReadCloser, error) {
+	return c.ImagePull(ctx, ref, image.PullOptions{})
+}
+
+func (c dockerClient) containerCreate(ctx context.Context, config container.Config, hostConfig container.HostConfig) (container.CreateResponse, error) {
+	return c.ContainerCreate(ctx, &config, &hostConfig, nil, nil, "")
+}
+
+func (c dockerClient) containerStart(ctx context.Context, containerID string) error {
+	return c.ContainerStart(ctx, containerID, container.StartOptions{})
+}
+
+func (c dockerClient) containerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error) {
+	return c.ContainerWait(ctx, containerID, condition)
+}
+
+func (c dockerClient) containerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error {
+	return c.ContainerRemove(ctx, containerID, options)
 }

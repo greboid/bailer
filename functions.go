@@ -56,7 +56,21 @@ func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
 		log.Info("Processing container", "volumes", len(volumes), "running", c.State == "running")
 
 		if c.State == "running" {
-			if cmd, ok := c.Labels[labelPreBackupCmd]; ok {
+			if argv, ok := c.Labels[labelHelperPreCmd]; ok {
+				image, hasImage := c.Labels[labelHelperImage]
+				if !hasImage {
+					log.Error("Helper pre-backup command set but no helper image, skipping container")
+					continue
+				}
+				if cmd, ok := c.Labels[labelPreBackupCmd]; ok {
+					log.Debug("Helper pre-backup command set, skipping exec pre-backup command", "cmd", cmd)
+				}
+				log.Info("Running helper pre-backup command", "image", image, "cmd", argv)
+				if err := runHelper(ctx, cli, name, image, argv, c.Mounts); err != nil {
+					log.Error("Helper pre-backup command failed, skipping container", "error", err)
+					continue
+				}
+			} else if cmd, ok := c.Labels[labelPreBackupCmd]; ok {
 				log.Info("Running pre-backup command", "cmd", cmd)
 				if err := cli.execCommand(ctx, c.ID, cmd); err != nil {
 					log.Error("Pre-backup command failed, skipping container", "error", err)
@@ -74,7 +88,20 @@ func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
 		}
 
 		if c.State == "running" {
-			if cmd, ok := c.Labels[labelPostBackupCmd]; ok {
+			if argv, ok := c.Labels[labelHelperPostCmd]; ok {
+				image, hasImage := c.Labels[labelHelperImage]
+				if !hasImage {
+					log.Error("Helper post-backup command set but no helper image")
+				} else {
+					if cmd, ok := c.Labels[labelPostBackupCmd]; ok {
+						log.Debug("Helper post-backup command set, skipping exec post-backup command", "cmd", cmd)
+					}
+					log.Info("Running helper post-backup command", "image", image, "cmd", argv)
+					if err := runHelper(ctx, cli, name, image, argv, c.Mounts); err != nil {
+						log.Error("Helper post-backup command failed", "error", err)
+					}
+				}
+			} else if cmd, ok := c.Labels[labelPostBackupCmd]; ok {
 				log.Info("Running post-backup command", "cmd", cmd)
 				if err := cli.execCommand(ctx, c.ID, cmd); err != nil {
 					log.Error("Post-backup command failed", "error", err)
