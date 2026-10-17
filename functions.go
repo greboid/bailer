@@ -96,22 +96,17 @@ func dryRunMode(ctx context.Context, cli dockerAPI, mode string) error {
 	fmt.Printf("%s\n", strings.Repeat("-", 113))
 
 	type row struct {
-		container string
-		volume    string
-		mountType string
-		dest      string
-		backup    string
+		container  string
+		volume     string
+		mountType  string
+		dest       string
+		backup     string
 		willBackup bool
 	}
 	var rows []row
 
 	for _, c := range containers {
 		name := containerName(c)
-		if c.State != "running" {
-			rows = append(rows, row{name, "-", "-", "-", "no (not running)", false})
-			continue
-		}
-
 		if len(c.Mounts) == 0 {
 			rows = append(rows, row{name, "-", "-", "-", "no (no mounts)", false})
 			continue
@@ -201,7 +196,7 @@ func parseVolumeList(s string) map[string]bool {
 		return nil
 	}
 	result := make(map[string]bool)
-	for _, name := range strings.Split(s, ",") {
+	for name := range strings.SplitSeq(s, ",") {
 		name = strings.TrimSpace(name)
 		if name != "" {
 			result[name] = true

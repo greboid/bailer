@@ -20,7 +20,7 @@ type dockerClient struct {
 }
 
 func (c dockerClient) listContainers(ctx context.Context) ([]container.Summary, error) {
-	return c.ContainerList(ctx, container.ListOptions{})
+	return c.ContainerList(ctx, container.ListOptions{All: true})
 }
 
 func (c dockerClient) copyFromContainer(ctx context.Context, containerID, srcPath string) (io.ReadCloser, error) {
