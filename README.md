@@ -1,16 +1,19 @@
 # Bailer
 
-Docker volume backup tool. Backs up container volumes as compressed tar archives, with filtering and pre/post backup hooks.
+Docker volume backup tool. Backs up container volumes with filtering and pre/post backup hooks, either as local compressed tar archives or as encrypted, deduplicated Restic snapshots on remote storage such as [BorgBase](https://www.borgbase.com).
 
 ## Bailer Config
 
 | Flag          | Env Var        | Default    | Description                                           |
 |---------------|----------------|------------|-------------------------------------------------------|
-| `-backup-dir` | `BACKUP_DIR`   | `/backups` | Directory to store backups                            |
+| `-backup-dir` | `BACKUP_DIR`   | `/backups` | Directory to store backups (local backend)            |
 | `-mode`       | `MODE`         | `exclude`  | Volume filtering mode: `exclude` or `include`         |
 | `-once`       | `ONCE`         | `false`    | Run a single backup pass and exit                     |
 | `-dry-run`    | `DRY_RUN`      | `false`    | Show what would be backed up without taking action    |
 | `-daemon`     | `DAEMON`       | `0`        | Run continuously, backing up at the given interval    |
+| `-backend`    | `BACKEND`      | `local`    | Backup backend: `local` or `restic`                   |
+| `-restic-bin` | `RESTIC_BIN`   | `restic`   | Path to the restic binary                             |
+| `-restic-host`| `RESTIC_HOST`  | hostname   | Host identity stored in restic snapshots              |
 
 ## Backup config
 
@@ -29,7 +32,9 @@ Bailer is configured per-container using Docker labels.
 Volumes are matched by their destination path inside the container (e.g. `/data`). The Docker socket is always excluded.
 
 Pre/post commands only run when the container is running. A failed pre-backup command (exec or helper) skips the container
-for that pass; a failed post-backup command is logged without affecting the backup.
+for that pass and fails the run; a failed post-backup command is reported but does not affect the backup itself. A run
+with any failure — skipped container, failed volume backup, failed post-hook — exits non-zero in `-once` mode and logs a
+`Scheduled backup failed` entry in daemon mode.
 
 ### Helper containers
 
@@ -46,7 +51,7 @@ intended for shell-less images that expose a single entrypoint (e.g. `sqlite3`, 
 - When `helper-pre-cmd` is set, `pre-backup-cmd` is ignored; when `helper-post-cmd` is set, `post-backup-cmd`
   is ignored. Only one mechanism runs per phase.
 - A `helper-pre-cmd` or `helper-post-cmd` without `helper-image` is an error: the pre-command failure skips the
-  container, the post-command failure is logged.
+  container and fails the run; the post-command failure is reported without affecting the backup.
 
 ```yaml
 labels:
@@ -56,9 +61,11 @@ labels:
 
 When running Bailer as a container, you should exclude its backup mount to avoid backing up the backup directory.
 
-## Backup Output
+## Local backend
 
-Backups are stored as `.tar.gz` files under the backup directory, organised by container name:
+With the default `local` backend, backups are stored as `.tar.gz` files under the backup directory, organised by
+container name. Archives are written to a temporary file and renamed into place only when complete, so a failed backup
+never leaves a truncated archive behind:
 
 ```
 /backups/
@@ -69,7 +76,101 @@ Backups are stored as `.tar.gz` files under the backup directory, organised by c
     _var_lib_postgresql_data_20260409-143001.tar.gz
 ```
 
-## Docker Compose Example
+## Restic backend
+
+Setting `BACKEND=restic` switches to encrypted, deduplicated backups in a
+[Restic](https://restic.net) repository. Bailer orchestrates Docker (discovery, filtering, hooks) and streams each
+volume directly into the `restic` binary — no intermediate archive files are created and no gzip is applied before
+restic, which compresses and encrypts the stream itself.
+
+Repository configuration uses the standard restic environment variables; Bailer adds no configuration format of its own:
+
+| Env var | Description |
+|---------|-------------|
+| `RESTIC_REPOSITORY` | Repository location, e.g. BorgBase's `rest:https://...` endpoint or a local path |
+| `RESTIC_REPOSITORY_FILE` | Alternative: file containing the repository location |
+| `RESTIC_PASSWORD_FILE` | File containing the repository password (recommended with Docker secrets) |
+| `RESTIC_PASSWORD` | Repository password directly (avoid where possible) |
+| `RESTIC_PASSWORD_COMMAND` | Command printing the repository password |
+
+Bailer validates the backend selection, the restic binary and the repository configuration **before** starting a
+backup pass, but never initialises the repository or manages credentials. Create the repository once with
+`restic init` yourself.
+
+Per-volume snapshots are created with:
+
+```bash
+restic backup \
+  --host <host> \
+  --tag bailer \
+  --tag container:myapp \
+  --tag volume:appdata \
+  --tag path:/data \
+  --stdin-filename myapp_appdata__data.tar \
+  --stdin-from-command \
+  -- /bailer export-volume --container-id <id> --path /data
+```
+
+The `--host` value identifies the Docker host (configurable via `RESTIC_HOST`, defaulting to the hostname). Snapshot
+identity is stable: the stored filename is derived from the container name, volume/mount identifier and mount
+destination — never from a timestamp — so the same mount maps to the same name across backups. Container and volume
+names are **not** globally unique across hosts; keep one repository per host or rely on `--host` for grouping and
+always filter snapshots by host.
+
+Note that restic tags are for filtering only; they do not automatically define retention groups. Run `restic forget`
+explicitly if you want retention, e.g. `restic forget --tag bailer --keep-daily 7 --keep-weekly 4`.
+
+### BorgBase setup
+
+1. Create a BorgBase account and add a **Restic repository** (choose an **EU storage location** if your data must
+   remain in the EU).
+2. Copy the repository URL shown by BorgBase — it looks like
+   `rest:https://<user>.borgbase.com/repo/<id>` — this is your `RESTIC_REPOSITORY`.
+3. Generate a strong password and store it in a secret file, e.g. `./secrets/restic_password`
+   (`chmod 600`, no trailing newline issues: restic trims a single trailing newline).
+4. Initialise the repository once:
+
+   ```bash
+   RESTIC_REPOSITORY='rest:https://<user>.borgbase.com/repo/<id>' \
+     RESTIC_PASSWORD_FILE=./secrets/restic_password \
+     restic init
+   ```
+
+5. Start Bailer with `BACKEND=restic` (compose example below). Verify the first run exits cleanly.
+6. Inspect snapshots:
+
+   ```bash
+   RESTIC_REPOSITORY='rest:...' RESTIC_PASSWORD_FILE=./secrets/restic_password \
+     restic snapshots --host <hostname>
+   RESTIC_REPOSITORY='rest:...' RESTIC_PASSWORD_FILE=./secrets/restic_password \
+     restic ls latest
+   ```
+
+### Docker Compose example (Restic + BorgBase)
+
+```yaml
+services:
+  bailer:
+    image: ghcr.io/greboid/bailer
+    environment:
+      BACKEND: restic
+      ONCE: "true"
+      RESTIC_REPOSITORY: ${RESTIC_REPOSITORY}
+      RESTIC_PASSWORD_FILE: /run/secrets/restic_password
+    secrets:
+      - restic_password
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+
+secrets:
+  restic_password:
+    file: ./secrets/restic_password
+```
+
+Add `DAEMON: 6h` instead of `ONCE: "true"` for scheduled operation. Passwords and repository URLs are never written
+to Bailer's logs; restic's own diagnostics go to stderr.
+
+### Docker Compose example (local backend)
 
 ```yaml
 services:
@@ -83,3 +184,100 @@ services:
     labels:
       com.greboid.bailer.exclude: "/backups"
 ```
+
+## Restoring data
+
+Bailer does not modify production volumes during restore. Restores are manual, per snapshot:
+
+1. On a machine with `restic` installed, configure repository credentials (the same `RESTIC_REPOSITORY` and
+   `RESTIC_PASSWORD_FILE` as above).
+2. List snapshots and pick one by ID:
+
+   ```bash
+   restic snapshots --host <hostname> --tag container:myapp
+   ```
+
+3. Dump the stored tar stream to a file. The archive was created by Docker's
+   [CopyFromContainer](https://docs.docker.com/reference/api/engine/#copy-files-or-folders-from-a-container),
+   so its entries are rooted at the **base name of the mount destination**: exporting `/data` yields a top-level
+   `data/` directory.
+
+   ```bash
+   restic dump <snapshot-id> myapp_appdata__data.tar > appdata.tar
+   ```
+
+4. Inspect the archive before extracting anything:
+
+   ```bash
+   tar -tvf appdata.tar
+   ```
+
+   Check the listing for absolute paths, `..` components, symlinks pointing outside the tree and special entries
+   (devices, fifos). Docker's export never produces absolute paths or `..` entries, but verify before extracting
+   anything you did not create yourself.
+
+5. Create a fresh Docker volume and extract into it. Never extract directly over an existing production volume.
+
+   ```bash
+   docker volume create myapp_data_restored
+   docker run --rm -i -v myapp_data_restored:/restore busybox \
+     tar -xpf - -C /restore --strip-components=1 < appdata.tar
+   ```
+
+   - `-p` preserves permissions; `-C /restore --strip-components=1` drops the leading `data/` path component so the
+     volume root matches the original mount contents. Omit `--strip-components=1` if you prefer the `data/` prefix.
+   - For safety on untrusted archives, extract without `-p` first, review
+     `tar -tvf appdata.tar`, and never extract as a step in a script that also touches production data.
+   - Ownership is preserved by the tar entries; the extracting container runs as root (`busybox` defaults to root),
+     which is required to restore non-root ownership.
+
+6. Verify contents and metadata before switching over:
+
+   ```bash
+   docker run --rm -v myapp_data_restored:/data busybox \
+     sh -c 'ls -laR /data; cat /data/hello.txt; readlink /data/link'
+   ```
+
+7. Point the application at the restored volume (new container, or stop the app, retarget the volume, start again).
+   Never restore in place over a running container's data.
+
+### Hook consistency caveat
+
+Pre-backup hooks (exec or helper) provide only a short consistency window: Bailer runs the hook, then streams the
+volume, which can take significant time for large volumes. Read consistency during streaming is not equivalent to an
+atomic application snapshot. For databases, prefer helper-container `sqlite3 .backup` / `pg_dump`-style hooks writing
+a consistent file into the volume, and accept that streaming adds delay between the hook and the snapshot.
+
+## The export-volume subcommand
+
+`bailer export-volume --container-id <id> --path /data` streams an uncompressed tar of the given container path to
+stdout. It is an internal building block used by the restic backend and is not a general-purpose export API: the path
+must be canonical and absolute, the container root filesystem is refused, hooks never run, and diagnostics go only to
+stderr so the stdout stream is always pure tar data. It exits non-zero on any failure.
+
+## Image contents
+
+The production image contains the bailer binary and a pinned restic release built into
+`ghcr.io/greboid/dockerbase/root` (which ships the `ca-certificates-bundle` trust store). The restic version is
+pinned in the `Dockerfile` via `RESTIC_VERSION` with per-architecture SHA256 checksums from the official
+`SHA256SUMS` release asset. To update: bump `RESTIC_VERSION` and refresh `RESTIC_SHA256_AMD64` /
+`RESTIC_SHA256_ARM64` from the release's `SHA256SUMS`. No shell is installed in the runtime image.
+
+## Development
+
+```bash
+go test ./...                                    # unit tests
+go test -tags integration ./...                  # restic integration tests (needs restic in PATH)
+go test -tags integration -run TestIntegration_Docker ./...   # Docker E2E tests (needs a Docker daemon)
+```
+
+The restic integration tests use a temporary local repository; no BorgBase account is required. Docker E2E tests skip
+automatically when no Docker daemon is reachable.
+
+## Known limitations
+
+- Tags do not implement retention: schedule `restic forget`/`prune` yourself.
+- Bailer never initialises repositories or manages credentials.
+- Pre-backup hooks give a short consistency window only (see the caveat above).
+- Restic snapshot identity depends on container names; recreating a container under a new name starts a new filename
+  (old snapshots remain intact and tags still group them by volume).

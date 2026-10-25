@@ -1,14 +1,10 @@
 package main
 
 import (
-	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
-	"io"
 	"log/slog"
-	"os"
-	"path/filepath"
 	"sort"
 	"strings"
 	"time"
@@ -17,7 +13,7 @@ import (
 	"github.com/docker/docker/api/types/mount"
 )
 
-func runDaemon(ctx context.Context, cli dockerAPI, backupDir, mode string, interval time.Duration) {
+func runDaemon(ctx context.Context, cli dockerAPI, backend BackupBackend, mode string, interval time.Duration) {
 	ticker := time.NewTicker(interval)
 	defer ticker.Stop()
 
@@ -25,7 +21,7 @@ func runDaemon(ctx context.Context, cli dockerAPI, backupDir, mode string, inter
 
 	for {
 		slog.Info("Starting scheduled backup")
-		if err := run(ctx, cli, backupDir, mode); err != nil {
+		if err := run(ctx, cli, backend, mode); err != nil {
 			slog.Error("Scheduled backup failed", "error", err)
 		}
 
@@ -38,7 +34,7 @@ func runDaemon(ctx context.Context, cli dockerAPI, backupDir, mode string, inter
 	}
 }
 
-func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
+func run(ctx context.Context, cli dockerAPI, backend BackupBackend, mode string) error {
 	var errs []error
 
 	containers, err := cli.listContainers(ctx)
@@ -88,9 +84,18 @@ func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
 		for _, vol := range volumes {
 			volLog := log.With("volume", mountIdentifier(vol), "type", vol.Type, "destination", vol.Destination)
 			volLog.Info("Backing up volume")
-			if err := backupVolume(ctx, cli, c.ID, name, backupDir, vol); err != nil {
+			request := BackupRequest{
+				ContainerID:   c.ID,
+				ContainerName: name,
+				Mount:         vol,
+			}
+			if err := backend.Backup(ctx, request); err != nil {
 				volLog.Error("Failed to backup volume", "error", err)
-				errs = append(errs, fmt.Errorf("%s: %w", name, err))
+				errs = append(errs, fmt.Errorf("%s: %s: %w", name, mountIdentifier(vol), err))
+			}
+			if ctxErr := ctx.Err(); ctxErr != nil {
+				errs = append(errs, fmt.Errorf("backup cancelled: %w", ctxErr))
+				return errors.Join(errs...)
 			}
 		}
 
@@ -240,47 +245,6 @@ func parseVolumeList(s string) map[string]bool {
 		}
 	}
 	return result
-}
-
-func backupVolume(ctx context.Context, cli dockerAPI, containerID, containerName, backupDir string, vol container.MountPoint) error {
-	timestamp := time.Now().Format("20060102-150405")
-	id := mountIdentifier(vol)
-	sanitized := strings.ReplaceAll(strings.Trim(id, "/"), "/", "_")
-	backupName := fmt.Sprintf("%s_%s.tar.gz", sanitized, timestamp)
-
-	containerDir := filepath.Join(backupDir, containerName)
-	if err := os.MkdirAll(containerDir, 0o755); err != nil {
-		return fmt.Errorf("creating backup directory: %w", err)
-	}
-	backupPath := filepath.Join(containerDir, backupName)
-
-	reader, err := cli.copyFromContainer(ctx, containerID, vol.Destination)
-	if err != nil {
-		return fmt.Errorf("copying from container: %w", err)
-	}
-	defer reader.Close()
-
-	outFile, err := os.Create(backupPath)
-	if err != nil {
-		return fmt.Errorf("creating backup file: %w", err)
-	}
-	defer outFile.Close()
-
-	gzWriter := gzip.NewWriter(outFile)
-	defer gzWriter.Close()
-
-	if _, err := io.Copy(gzWriter, reader); err != nil {
-		return fmt.Errorf("writing backup file: %w", err)
-	}
-
-	if err := gzWriter.Close(); err != nil {
-		return fmt.Errorf("finalising archive: %w", err)
-	}
-	if err := outFile.Close(); err != nil {
-		return fmt.Errorf("closing backup file: %w", err)
-	}
-
-	return nil
 }
 
 func containerName(c container.Summary) string {

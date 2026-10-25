@@ -14,6 +14,11 @@ import (
 	"github.com/docker/docker/api/types/mount"
 )
 
+func localBackend(cli dockerAPI, t *testing.T) BackupBackend {
+	t.Helper()
+	return &LocalTarBackend{cli: cli, backupDir: t.TempDir()}
+}
+
 func TestParseVolumeList(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -185,7 +190,7 @@ func TestFilterVolumes(t *testing.T) {
 
 func TestRun_ListError(t *testing.T) {
 	mc := &mockClient{listErr: errors.New("docker unavailable")}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err == nil {
 		t.Fatal("expected error when listing containers fails")
 	}
@@ -196,7 +201,7 @@ func TestRun_ListError(t *testing.T) {
 
 func TestRun_NoContainers(t *testing.T) {
 	mc := &mockClient{containers: nil}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -221,7 +226,7 @@ func TestRun_VolumeFailure(t *testing.T) {
 		},
 		copyErrs: map[string]error{"/data": errors.New("copy failed")},
 	}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err == nil {
 		t.Fatal("expected error when a volume backup fails")
 	}
@@ -247,7 +252,7 @@ func TestRun_BackupsStoppedContainer(t *testing.T) {
 			},
 		},
 	}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,7 +278,7 @@ func TestRun_StoppedContainerSkipsExecCommands(t *testing.T) {
 			},
 		},
 	}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -300,7 +305,7 @@ func TestRun_BackupsRunningContainer(t *testing.T) {
 			},
 		},
 	}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -332,7 +337,7 @@ func TestRun_IncludeModeFiltersContainers(t *testing.T) {
 			},
 		},
 	}
-	err := run(context.Background(), mc, t.TempDir(), "include")
+	err := run(context.Background(), mc, localBackend(mc, t), "include")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -357,7 +362,7 @@ func TestRun_PreBackupCommand(t *testing.T) {
 			},
 		},
 	}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -386,7 +391,7 @@ func TestRun_PreBackupFailsSkipsContainer(t *testing.T) {
 		},
 		execErrs: map[string]error{"fail_cmd": errors.New("command failed")},
 	}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err == nil {
 		t.Fatal("expected error when pre-backup fails")
 	}
@@ -414,7 +419,7 @@ func TestRun_PostBackupCommand(t *testing.T) {
 			},
 		},
 	}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -443,7 +448,7 @@ func TestRun_PostBackupFailureDoesNotBlock(t *testing.T) {
 		},
 		execErrs: map[string]error{"fail_cleanup": errors.New("cleanup failed")},
 	}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err == nil {
 		t.Fatal("expected error when post-backup fails")
 	}
@@ -472,7 +477,7 @@ func TestRun_BothPreAndPostBackup(t *testing.T) {
 			},
 		},
 	}
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -500,7 +505,8 @@ func TestBackupVolume(t *testing.T) {
 		RW:          true,
 	}
 
-	err := backupVolume(context.Background(), mc, "container123456", "testcontainer", tmpDir, vol)
+	backend := &LocalTarBackend{cli: mc, backupDir: tmpDir}
+	err := backend.Backup(context.Background(), BackupRequest{ContainerID: "container123456", ContainerName: "testcontainer", Mount: vol})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -531,7 +537,8 @@ func TestBackupVolume_ProducesValidGzip(t *testing.T) {
 	}
 
 	tmpDir := t.TempDir()
-	err := backupVolume(context.Background(), mc, "container123456", "testcontainer", tmpDir, vol)
+	backend := &LocalTarBackend{cli: mc, backupDir: tmpDir}
+	err := backend.Backup(context.Background(), BackupRequest{ContainerID: "container123456", ContainerName: "testcontainer", Mount: vol})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -571,11 +578,50 @@ func TestBackupVolume_CopyError(t *testing.T) {
 		RW:          true,
 	}
 
-	err := backupVolume(context.Background(), mc, "container123456", "testcontainer", t.TempDir(), vol)
+	backend := &LocalTarBackend{cli: mc, backupDir: t.TempDir()}
+	err := backend.Backup(context.Background(), BackupRequest{ContainerID: "container123456", ContainerName: "testcontainer", Mount: vol})
 	if err == nil {
 		t.Fatal("expected error when copy fails")
 	}
 	if !strings.Contains(err.Error(), "copying from container") {
 		t.Errorf("unexpected error: %v", err)
+	}
+}
+
+func TestRun_CancellationStopsProcessing(t *testing.T) {
+	ctx, cancel := context.WithCancel(context.Background())
+	mc := &mockClient{
+		containers: []container.Summary{
+			{
+				ID:     "first123456789",
+				State:  "stopped",
+				Names:  []string{"/first"},
+				Labels: map[string]string{},
+				Mounts: []container.MountPoint{
+					{Type: mount.TypeVolume, Name: "vol1", Destination: "/data", RW: true},
+				},
+			},
+			{
+				ID:     "second123456789",
+				State:  "stopped",
+				Names:  []string{"/second"},
+				Labels: map[string]string{},
+				Mounts: []container.MountPoint{
+					{Type: mount.TypeVolume, Name: "vol1", Destination: "/data", RW: true},
+				},
+			},
+		},
+	}
+
+	cancel()
+	err := run(ctx, mc, localBackend(mc, t), "exclude")
+	if err == nil {
+		t.Fatal("expected error when the context is cancelled")
+	}
+	if !strings.Contains(err.Error(), "backup cancelled") {
+		t.Errorf("expected cancellation in aggregate error, got: %v", err)
+	}
+	if len(mc.copyCalls) != 1 {
+		t.Errorf("expected processing to stop after cancellation, got %d copies", len(mc.copyCalls))
 	}
 }

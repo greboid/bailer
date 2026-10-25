@@ -285,7 +285,7 @@ func TestRun_HelperPreBackupCommand(t *testing.T) {
 		}),
 	}
 
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestRun_HelperPreCmdOverridesExecCmd(t *testing.T) {
 		}),
 	}
 
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -335,7 +335,7 @@ func TestRun_HelperPreWithoutImageSkipsContainer(t *testing.T) {
 		}),
 	}
 
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err == nil {
 		t.Fatal("expected error when helper image is missing")
 	}
@@ -358,7 +358,7 @@ func TestRun_HelperPostWithoutImageLogsButBacksUp(t *testing.T) {
 		}),
 	}
 
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err == nil {
 		t.Fatal("expected error when helper image is missing")
 	}
@@ -385,7 +385,7 @@ func TestRun_HelperPreFailureSkipsContainer(t *testing.T) {
 		}),
 	}
 
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err == nil {
 		t.Fatal("expected error when helper pre-backup fails")
 	}
@@ -409,7 +409,7 @@ func TestRun_HelperPostFailureDoesNotBlock(t *testing.T) {
 		}),
 	}
 
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err == nil {
 		t.Fatal("expected error when helper post-backup fails")
 	}
@@ -431,7 +431,7 @@ func TestRun_HelperSkippedForStoppedContainer(t *testing.T) {
 	summary.State = "stopped"
 	mc.containers = []container.Summary{summary}
 
-	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

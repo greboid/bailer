@@ -30,6 +30,7 @@ type mockClient struct {
 	startCalls    []string
 	waitCalls     []waitCall
 	removeCalls   []string
+	customReader  io.ReadCloser
 }
 
 type copyCall struct {
@@ -57,6 +58,9 @@ func (m *mockClient) copyFromContainer(_ context.Context, containerID, srcPath s
 	m.copyCalls = append(m.copyCalls, copyCall{containerID, srcPath})
 	if err := m.copyErrs[srcPath]; err != nil {
 		return nil, err
+	}
+	if m.customReader != nil {
+		return m.customReader, nil
 	}
 	return io.NopCloser(bytes.NewReader([]byte("fake tar data"))), nil
 }
