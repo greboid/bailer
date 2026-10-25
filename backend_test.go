@@ -1,8 +1,10 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"errors"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"strings"
@@ -298,6 +300,49 @@ func TestResticBackend_Failure(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exit status 3") {
 		t.Errorf("expected exit status in error, got: %v", err)
+	}
+	if !strings.Contains(err.Error(), "repository is locked") {
+		t.Errorf("expected restic output in error, got: %v", err)
+	}
+}
+
+func TestSlogWriter(t *testing.T) {
+	var buf bytes.Buffer
+	prev := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(prev) })
+
+	w := &slogWriter{logger: slog.Default(), level: slog.LevelDebug}
+	for _, chunk := range []string{
+		"using parent snapshot 67b1afeb\n",
+		"\n",
+		"progress 25%\rprogress 50%\rprogress done\n",
+		"snapshot 74621bf1 saved",
+	} {
+		if _, err := w.Write([]byte(chunk)); err != nil {
+			t.Fatalf("write failed: %v", err)
+		}
+	}
+	w.Flush()
+
+	logged := buf.String()
+	for _, want := range []string{
+		"using parent snapshot 67b1afeb",
+		"progress 25%",
+		"progress 50%",
+		"progress done",
+		"snapshot 74621bf1 saved",
+	} {
+		if !strings.Contains(logged, want) {
+			t.Errorf("expected %q in log output, got:\n%s", want, logged)
+		}
+	}
+	if strings.Count(logged, "\n") != 5 {
+		t.Errorf("expected 5 log records (blank lines skipped), got:\n%s", logged)
+	}
+
+	if tail := w.tail(); !strings.Contains(tail, "snapshot 74621bf1 saved") {
+		t.Errorf("expected captured output in tail, got %q", tail)
 	}
 }
 

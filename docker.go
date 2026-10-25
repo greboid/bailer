@@ -13,8 +13,8 @@ import (
 	"github.com/docker/docker/pkg/stdcopy"
 )
 
-// execOutputLimit caps how much captured exec output is included in an error.
-const execOutputLimit = 1024
+// outputLimit caps how much captured command output is included in an error.
+const outputLimit = 1024
 
 type dockerAPI interface {
 	listContainers(ctx context.Context) ([]container.Summary, error)
@@ -89,8 +89,8 @@ func outputSummary(out string) string {
 	if out == "" {
 		return "no output"
 	}
-	if len(out) > execOutputLimit {
-		out = "..." + out[len(out)-execOutputLimit:]
+	if len(out) > outputLimit {
+		out = "..." + out[len(out)-outputLimit:]
 	}
 	return out
 }

@@ -1,11 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"compress/gzip"
 	"context"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -108,19 +110,71 @@ type ResticBackend struct {
 
 func (b *ResticBackend) Backup(ctx context.Context, request BackupRequest) error {
 	cmd := exec.CommandContext(ctx, b.resticBin, resticBackupArgs(b.selfPath, b.host, request)...)
-	// Restic prints progress to stderr and, with --json, reports to stdout.
-	// Neither must ever reach bailer's stdout: the export-volume subprocess
-	// writes the tar stream there. Forward both to stderr and let restic
-	// inherit the environment so RESTIC_* variables apply.
-	cmd.Stdout = os.Stderr
-	cmd.Stderr = os.Stderr
+	// Restic prints progress to stderr and its summary to stdout. Neither
+	// must ever reach bailer's stdout: the export-volume subprocess writes
+	// the tar stream there. Output is captured and forwarded to slog at
+	// debug level; restic inherits the environment so RESTIC_* variables
+	// apply.
+	out := &slogWriter{logger: slog.Default(), level: slog.LevelDebug}
+	cmd.Stdout = out
+	cmd.Stderr = out
 
 	if err := cmd.Run(); err != nil {
-		// The error may be a context cancellation or a restic failure;
-		// restic's own diagnostics were already forwarded to stderr.
-		return fmt.Errorf("restic backup of %s: %w", stableArchiveName(request), err)
+		out.Flush()
+		// The error may be a context cancellation or a restic failure; the
+		// full diagnostics went to slog at debug level and the tail is
+		// included here so failures stay diagnosable at any log level.
+		return fmt.Errorf("restic backup of %s: %w: %s", stableArchiveName(request), err, out.tail())
 	}
 	return nil
+}
+
+// slogWriter forwards subprocess output to slog line by line at the given
+// level, collapsing carriage-return progress rewrites into separate lines.
+// It retains everything written so failures can include a tail in errors.
+type slogWriter struct {
+	logger *slog.Logger
+	level  slog.Level
+
+	pending bytes.Buffer // partial line awaiting its newline
+	all     bytes.Buffer // full output for error reporting
+}
+
+func (w *slogWriter) Write(p []byte) (int, error) {
+	w.all.Write(p)
+	w.pending.Write(p)
+	for {
+		line, err := w.pending.ReadString('\n')
+		if err != nil {
+			w.pending.Reset()
+			w.pending.WriteString(line)
+			break
+		}
+		w.emit(line)
+	}
+	return len(p), nil
+}
+
+// Flush emits a trailing partial line; call once the subprocess exits.
+func (w *slogWriter) Flush() {
+	if w.pending.Len() > 0 {
+		w.emit(w.pending.String())
+		w.pending.Reset()
+	}
+}
+
+func (w *slogWriter) emit(line string) {
+	for part := range strings.SplitSeq(strings.TrimRight(line, "\n"), "\r") {
+		part = strings.TrimSpace(part)
+		if part == "" {
+			continue
+		}
+		w.logger.Log(context.Background(), w.level, part)
+	}
+}
+
+func (w *slogWriter) tail() string {
+	return outputSummary(w.all.String())
 }
 
 // resticBackupArgs builds the restic argv for one mount. The tar stream is

@@ -115,10 +115,10 @@ func TestOutputSummary(t *testing.T) {
 		})
 	}
 
-	long := strings.Repeat("x", execOutputLimit+100)
+	long := strings.Repeat("x", outputLimit+100)
 	got := outputSummary(long)
-	if len(got) != execOutputLimit+3 || !strings.HasPrefix(got, "...") {
-		t.Errorf("expected tail of %d bytes with prefix, got %d bytes", execOutputLimit, len(got))
+	if len(got) != outputLimit+3 || !strings.HasPrefix(got, "...") {
+		t.Errorf("expected tail of %d bytes with prefix, got %d bytes", outputLimit, len(got))
 	}
 }
 

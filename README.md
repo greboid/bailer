@@ -171,7 +171,8 @@ secrets:
 ```
 
 Add `DAEMON: 6h` instead of `ONCE: "true"` for scheduled operation. Passwords and repository URLs are never written
-to Bailer's logs; restic's own diagnostics go to stderr.
+to Bailer's logs; restic's own output is logged line by line at debug level, and the last kilobyte is included in the
+error when a backup fails.
 
 ### Docker Compose example (local backend)
 
