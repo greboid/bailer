@@ -65,14 +65,14 @@ func run(ctx context.Context, cli dockerAPI, backend BackupBackend, mode string)
 				if cmd, ok := c.Labels[labelPreBackupCmd]; ok {
 					log.Debug("Helper pre-backup command set, skipping exec pre-backup command", "cmd", cmd)
 				}
-				log.Info("Running helper pre-backup command", "image", image, "cmd", argv)
+				log.Debug("Running helper pre-backup command", "image", image, "cmd", argv)
 				if err := runHelper(ctx, cli, name, image, argv, c.Mounts); err != nil {
 					log.Error("Helper pre-backup command failed, skipping container", "error", err)
 					errs = append(errs, fmt.Errorf("%s: helper pre-backup command: %w", name, err))
 					continue
 				}
 			} else if cmd, ok := c.Labels[labelPreBackupCmd]; ok {
-				log.Info("Running pre-backup command", "cmd", cmd, "user", c.Labels[labelExecUser])
+				log.Debug("Running pre-backup command", "cmd", cmd, "user", c.Labels[labelExecUser])
 				if err := cli.execCommand(ctx, c.ID, c.Labels[labelExecUser], cmd); err != nil {
 					log.Error("Pre-backup command failed, skipping container", "error", err)
 					errs = append(errs, fmt.Errorf("%s: pre-backup command: %w", name, err))
@@ -109,14 +109,14 @@ func run(ctx context.Context, cli dockerAPI, backend BackupBackend, mode string)
 					if cmd, ok := c.Labels[labelPostBackupCmd]; ok {
 						log.Debug("Helper post-backup command set, skipping exec post-backup command", "cmd", cmd)
 					}
-					log.Info("Running helper post-backup command", "image", image, "cmd", argv)
+					log.Debug("Running helper post-backup command", "image", image, "cmd", argv)
 					if err := runHelper(ctx, cli, name, image, argv, c.Mounts); err != nil {
 						log.Error("Helper post-backup command failed", "error", err)
 						errs = append(errs, fmt.Errorf("%s: helper post-backup command: %w", name, err))
 					}
 				}
 			} else if cmd, ok := c.Labels[labelPostBackupCmd]; ok {
-				log.Info("Running post-backup command", "cmd", cmd, "user", c.Labels[labelExecUser])
+				log.Debug("Running post-backup command", "cmd", cmd, "user", c.Labels[labelExecUser])
 				if err := cli.execCommand(ctx, c.ID, c.Labels[labelExecUser], cmd); err != nil {
 					log.Error("Post-backup command failed", "error", err)
 					errs = append(errs, fmt.Errorf("%s: post-backup command: %w", name, err))
