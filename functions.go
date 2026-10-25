@@ -267,6 +267,13 @@ func backupVolume(ctx context.Context, cli dockerAPI, containerID, containerName
 		return fmt.Errorf("writing backup file: %w", err)
 	}
 
+	if err := gzWriter.Close(); err != nil {
+		return fmt.Errorf("finalising archive: %w", err)
+	}
+	if err := outFile.Close(); err != nil {
+		return fmt.Errorf("closing backup file: %w", err)
+	}
+
 	return nil
 }
 

@@ -1,8 +1,10 @@
 package main
 
 import (
+	"compress/gzip"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -510,6 +512,45 @@ func TestBackupVolume(t *testing.T) {
 	}
 	if len(mc.copyCalls) != 1 || mc.copyCalls[0].srcPath != "/data" {
 		t.Errorf("expected copy call for /data, got %v", mc.copyCalls)
+	}
+}
+
+func TestBackupVolume_ProducesValidGzip(t *testing.T) {
+	mc := &mockClient{}
+	vol := container.MountPoint{
+		Type:        mount.TypeVolume,
+		Name:        "testvol",
+		Destination: "/data",
+		RW:          true,
+	}
+
+	tmpDir := t.TempDir()
+	err := backupVolume(context.Background(), mc, "container123456", "testcontainer", tmpDir, vol)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	matches, err := filepath.Glob(filepath.Join(tmpDir, "testcontainer", "testvol_*.tar.gz"))
+	if err != nil || len(matches) != 1 {
+		t.Fatalf("expected 1 backup file, got %d (err: %v)", len(matches), err)
+	}
+
+	f, err := os.Open(matches[0])
+	if err != nil {
+		t.Fatalf("failed to open backup: %v", err)
+	}
+	defer f.Close()
+	gz, err := gzip.NewReader(f)
+	if err != nil {
+		t.Fatalf("backup is not valid gzip (finalisation failed): %v", err)
+	}
+	defer gz.Close()
+	content, err := io.ReadAll(gz)
+	if err != nil {
+		t.Fatalf("failed to read gzip stream: %v", err)
+	}
+	if string(content) != "fake tar data" {
+		t.Errorf("unexpected content: %q", content)
 	}
 }
 
