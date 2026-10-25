@@ -110,9 +110,16 @@ func helperMounts(mounts []container.MountPoint) []mount.Mount {
 		if m.Destination == "/var/run/docker.sock" {
 			continue
 		}
+		// For named volumes MountPoint.Source is the host storage path
+		// (/var/lib/docker/volumes/<name>/_data); mount.Mount.Source must be
+		// the volume name instead.
+		source := m.Source
+		if m.Type == mount.TypeVolume && m.Name != "" {
+			source = m.Name
+		}
 		result = append(result, mount.Mount{
 			Type:   m.Type,
-			Source: m.Source,
+			Source: source,
 			Target: m.Destination,
 		})
 	}

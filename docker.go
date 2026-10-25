@@ -1,14 +1,20 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/image"
 	"github.com/docker/docker/client"
+	"github.com/docker/docker/pkg/stdcopy"
 )
+
+// execOutputLimit caps how much captured exec output is included in an error.
+const execOutputLimit = 1024
 
 type dockerAPI interface {
 	listContainers(ctx context.Context) ([]container.Summary, error)
@@ -55,7 +61,12 @@ func (c dockerClient) execCommand(ctx context.Context, containerID, cmd string) 
 		return fmt.Errorf("starting exec: %w", err)
 	}
 
-	_, _ = io.ReadAll(hijacked.Reader)
+	// The exec stream is multiplexed (no TTY): demux stdout and stderr into
+	// one buffer so failures can carry the command's output.
+	var out bytes.Buffer
+	if _, err := stdcopy.StdCopy(&out, &out, hijacked.Reader); err != nil {
+		return fmt.Errorf("reading exec output: %w", err)
+	}
 
 	inspect, err := c.ContainerExecInspect(ctx, execCreate.ID)
 	if err != nil {
@@ -63,10 +74,23 @@ func (c dockerClient) execCommand(ctx context.Context, containerID, cmd string) 
 	}
 
 	if inspect.ExitCode != 0 {
-		return fmt.Errorf("exec exited with code %d", inspect.ExitCode)
+		return fmt.Errorf("exec exited with code %d: %s", inspect.ExitCode, execOutputSummary(out.String()))
 	}
 
 	return nil
+}
+
+// execOutputSummary returns the tail of an exec's output for inclusion in an
+// error message; failures print their reason at the end.
+func execOutputSummary(out string) string {
+	out = strings.TrimSpace(out)
+	if out == "" {
+		return "no output"
+	}
+	if len(out) > execOutputLimit {
+		out = "..." + out[len(out)-execOutputLimit:]
+	}
+	return out
 }
 
 func (c dockerClient) imageInspect(ctx context.Context, ref string) (image.InspectResponse, error) {

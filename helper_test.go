@@ -76,7 +76,7 @@ type waitCall struct {
 
 func helperTestMounts() []container.MountPoint {
 	return []container.MountPoint{
-		{Type: mount.TypeVolume, Name: "data", Source: "data", Destination: "/data", RW: true},
+		{Type: mount.TypeVolume, Name: "data", Source: "/var/lib/docker/volumes/data/_data", Destination: "/data", RW: true},
 		{Type: mount.TypeBind, Source: "/host/config", Destination: "/config", RW: true},
 		{Type: mount.TypeBind, Source: "/var/run/docker.sock", Destination: "/var/run/docker.sock", RW: true},
 		{Type: mount.TypeTmpfs, Destination: "/tmp", RW: true},
@@ -142,7 +142,7 @@ func TestHelperMounts(t *testing.T) {
 
 	vol := result[0]
 	if vol.Type != mount.TypeVolume || vol.Source != "data" || vol.Target != "/data" {
-		t.Errorf("unexpected volume mount: %+v", vol)
+		t.Errorf("expected volume mount source to be the volume name, got: %+v", vol)
 	}
 	if vol.ReadOnly {
 		t.Error("expected volume mount to be read-write")

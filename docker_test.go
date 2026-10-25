@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"strings"
+	"testing"
 
 	"github.com/docker/docker/api/types/container"
 	"github.com/docker/docker/api/types/mount"
@@ -71,4 +73,30 @@ func (m *mockClient) execCommand(_ context.Context, containerID, cmd string) err
 		return err
 	}
 	return nil
+}
+
+func TestExecOutputSummary(t *testing.T) {
+	tests := []struct {
+		name string
+		in   string
+		want string
+	}{
+		{"empty", "", "no output"},
+		{"whitespace only", "  \n\t ", "no output"},
+		{"short", "pg_dump: error\n", "pg_dump: error"},
+		{"trailing newline trimmed", "fatal: boom\n\n", "fatal: boom"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := execOutputSummary(tt.in); got != tt.want {
+				t.Errorf("execOutputSummary(%q) = %q, want %q", tt.in, got, tt.want)
+			}
+		})
+	}
+
+	long := strings.Repeat("x", execOutputLimit+100)
+	got := execOutputSummary(long)
+	if len(got) != execOutputLimit+3 || !strings.HasPrefix(got, "...") {
+		t.Errorf("expected tail of %d bytes with prefix, got %d bytes", execOutputLimit, len(got))
+	}
 }
