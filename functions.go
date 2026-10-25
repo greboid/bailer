@@ -23,6 +23,8 @@ func runDaemon(ctx context.Context, cli dockerAPI, backend BackupBackend, mode s
 		slog.Info("Starting scheduled backup")
 		if err := run(ctx, cli, backend, mode); err != nil {
 			slog.Error("Scheduled backup failed", "error", err)
+		} else {
+			slog.Info("Scheduled backup completed")
 		}
 
 		select {

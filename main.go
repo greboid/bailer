@@ -94,6 +94,7 @@ func main() {
 			slog.Error("Backup failed", "error", err)
 			os.Exit(1)
 		}
+		slog.Info("Backup completed")
 		return
 	}
 
