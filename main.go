@@ -18,6 +18,7 @@ import (
 const (
 	labelPreBackupCmd  = "com.greboid.bailer.pre-backup-cmd"
 	labelPostBackupCmd = "com.greboid.bailer.post-backup-cmd"
+	labelExecUser      = "com.greboid.bailer.exec-user"
 	labelExclude       = "com.greboid.bailer.exclude"
 	labelInclude       = "com.greboid.bailer.include"
 

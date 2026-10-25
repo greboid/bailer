@@ -77,9 +77,21 @@ func runHelper(ctx context.Context, cli dockerAPI, targetName, image, argv strin
 	}
 
 	if exitCode != 0 {
-		return fmt.Errorf("helper container for %s exited with code %d", targetName, exitCode)
+		// Logs must be read before the deferred remove deletes the container.
+		return fmt.Errorf("helper container for %s exited with code %d: %s", targetName, exitCode, helperOutput(ctx, cli, created.ID))
 	}
 	return nil
+}
+
+// helperOutput fetches a stopped helper container's stdout and stderr for
+// inclusion in an error message.
+func helperOutput(ctx context.Context, cli dockerAPI, containerID string) string {
+	reader, err := cli.containerLogs(ctx, containerID, container.LogsOptions{ShowStdout: true, ShowStderr: true})
+	if err != nil {
+		return "no output"
+	}
+	defer reader.Close()
+	return outputSummary(readMuxedOutput(reader))
 }
 
 func ensureHelperImage(ctx context.Context, cli dockerAPI, image string) error {

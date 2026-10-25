@@ -72,8 +72,8 @@ func run(ctx context.Context, cli dockerAPI, backend BackupBackend, mode string)
 					continue
 				}
 			} else if cmd, ok := c.Labels[labelPreBackupCmd]; ok {
-				log.Info("Running pre-backup command", "cmd", cmd)
-				if err := cli.execCommand(ctx, c.ID, cmd); err != nil {
+				log.Info("Running pre-backup command", "cmd", cmd, "user", c.Labels[labelExecUser])
+				if err := cli.execCommand(ctx, c.ID, c.Labels[labelExecUser], cmd); err != nil {
 					log.Error("Pre-backup command failed, skipping container", "error", err)
 					errs = append(errs, fmt.Errorf("%s: pre-backup command: %w", name, err))
 					continue
@@ -116,8 +116,8 @@ func run(ctx context.Context, cli dockerAPI, backend BackupBackend, mode string)
 					}
 				}
 			} else if cmd, ok := c.Labels[labelPostBackupCmd]; ok {
-				log.Info("Running post-backup command", "cmd", cmd)
-				if err := cli.execCommand(ctx, c.ID, cmd); err != nil {
+				log.Info("Running post-backup command", "cmd", cmd, "user", c.Labels[labelExecUser])
+				if err := cli.execCommand(ctx, c.ID, c.Labels[labelExecUser], cmd); err != nil {
 					log.Error("Post-backup command failed", "error", err)
 					errs = append(errs, fmt.Errorf("%s: post-backup command: %w", name, err))
 				}

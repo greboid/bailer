@@ -19,13 +19,14 @@ const execOutputLimit = 1024
 type dockerAPI interface {
 	listContainers(ctx context.Context) ([]container.Summary, error)
 	copyFromContainer(ctx context.Context, containerID, srcPath string) (io.ReadCloser, error)
-	execCommand(ctx context.Context, containerID, cmd string) error
+	execCommand(ctx context.Context, containerID, user, cmd string) error
 	imageInspect(ctx context.Context, image string) (image.InspectResponse, error)
 	imagePull(ctx context.Context, image string) (io.ReadCloser, error)
 	containerCreate(ctx context.Context, config container.Config, hostConfig container.HostConfig) (container.CreateResponse, error)
 	containerStart(ctx context.Context, containerID string) error
 	containerWait(ctx context.Context, containerID string, condition container.WaitCondition) (<-chan container.WaitResponse, <-chan error)
 	containerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error
+	containerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error)
 }
 
 type dockerClient struct {
@@ -41,9 +42,10 @@ func (c dockerClient) copyFromContainer(ctx context.Context, containerID, srcPat
 	return r, err
 }
 
-func (c dockerClient) execCommand(ctx context.Context, containerID, cmd string) error {
+func (c dockerClient) execCommand(ctx context.Context, containerID, user, cmd string) error {
 	execCreate, err := c.ContainerExecCreate(ctx, containerID, container.ExecOptions{
 		Cmd:          []string{"sh", "-c", cmd},
+		User:         user,
 		AttachStdout: true,
 		AttachStderr: true,
 	})
@@ -74,15 +76,15 @@ func (c dockerClient) execCommand(ctx context.Context, containerID, cmd string) 
 	}
 
 	if inspect.ExitCode != 0 {
-		return fmt.Errorf("exec exited with code %d: %s", inspect.ExitCode, execOutputSummary(out.String()))
+		return fmt.Errorf("exec exited with code %d: %s", inspect.ExitCode, outputSummary(out.String()))
 	}
 
 	return nil
 }
 
-// execOutputSummary returns the tail of an exec's output for inclusion in an
+// outputSummary returns the tail of a command's output for inclusion in an
 // error message; failures print their reason at the end.
-func execOutputSummary(out string) string {
+func outputSummary(out string) string {
 	out = strings.TrimSpace(out)
 	if out == "" {
 		return "no output"
@@ -91,6 +93,16 @@ func execOutputSummary(out string) string {
 		out = "..." + out[len(out)-execOutputLimit:]
 	}
 	return out
+}
+
+// readMuxedOutput drains a non-TTY docker stream (exec output or container
+// logs), demultiplexing stdout/stderr frames into one buffer.
+func readMuxedOutput(r io.Reader) string {
+	var buf bytes.Buffer
+	// On a mid-stream error keep whatever was decoded; a partial tail still
+	// beats nothing.
+	_, _ = stdcopy.StdCopy(&buf, &buf, r)
+	return buf.String()
 }
 
 func (c dockerClient) imageInspect(ctx context.Context, ref string) (image.InspectResponse, error) {
@@ -115,4 +127,8 @@ func (c dockerClient) containerWait(ctx context.Context, containerID string, con
 
 func (c dockerClient) containerRemove(ctx context.Context, containerID string, options container.RemoveOptions) error {
 	return c.ContainerRemove(ctx, containerID, options)
+}
+
+func (c dockerClient) containerLogs(ctx context.Context, containerID string, options container.LogsOptions) (io.ReadCloser, error) {
+	return c.ContainerLogs(ctx, containerID, options)
 }

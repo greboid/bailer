@@ -25,6 +25,7 @@ Bailer is configured per-container using Docker labels.
 | `com.greboid.bailer.include` | Comma-separated list of mount destinations to include (used in `include` mode), use `*` for all |
 | `com.greboid.bailer.pre-backup-cmd` | Command to run inside the container before backing up |
 | `com.greboid.bailer.post-backup-cmd` | Command to run inside the container after backing up |
+| `com.greboid.bailer.exec-user` | User (name or `UID[:GID]`) to run pre/post-backup commands as; defaults to the container's user |
 | `com.greboid.bailer.helper-image` | Image for an ephemeral helper container created by Bailer |
 | `com.greboid.bailer.helper-pre-cmd` | JSON argv array to run in the helper container before backing up |
 | `com.greboid.bailer.helper-post-cmd` | JSON argv array to run in the helper container after backing up |
@@ -34,7 +35,8 @@ Volumes are matched by their destination path inside the container (e.g. `/data`
 Pre/post commands only run when the container is running. A failed pre-backup command (exec or helper) skips the container
 for that pass and fails the run; a failed post-backup command is reported but does not affect the backup itself. A run
 with any failure — skipped container, failed volume backup, failed post-hook — exits non-zero in `-once` mode and logs a
-`Scheduled backup failed` entry in daemon mode.
+`Scheduled backup failed` entry in daemon mode. Failure errors include the command's captured output (exec output, or
+the helper container's logs), trimmed to the last kilobyte.
 
 ### Helper containers
 
@@ -45,7 +47,8 @@ intended for shell-less images that expose a single entrypoint (e.g. `sqlite3`, 
 - The command value must be a **JSON argv array**, not a shell string — the commands are passed directly as the
   container entrypoint and never wrapped in `sh -c`.
 - Helper containers run as root and mount all of the target container's volume and bind mounts read-write
-  (excluding the Docker socket), so commands can write snapshot files into the volumes.
+  (excluding the Docker socket), so commands can write snapshot files into the volumes. `exec-user` does not
+  apply to helpers; use a `user:`-prefixed argv entry or a wrapper image if the helper must drop privileges.
 - The helper image is pulled automatically if it is not already present.
 - The helper container is removed after each run.
 - When `helper-pre-cmd` is set, `pre-backup-cmd` is ignored; when `helper-post-cmd` is set, `post-backup-cmd`

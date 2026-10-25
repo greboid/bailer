@@ -374,6 +374,32 @@ func TestRun_PreBackupCommand(t *testing.T) {
 	}
 }
 
+func TestRun_PreBackupCommandExecUser(t *testing.T) {
+	mc := &mockClient{
+		containers: []container.Summary{
+			{
+				ID:    "running123456789",
+				State: "running",
+				Names: []string{"/myapp"},
+				Labels: map[string]string{
+					labelPreBackupCmd: "pg_dump",
+					labelExecUser:     "root",
+				},
+				Mounts: []container.MountPoint{
+					{Type: mount.TypeVolume, Name: "vol1", Destination: "/data", RW: true},
+				},
+			},
+		},
+	}
+	err := run(context.Background(), mc, localBackend(mc, t), "exclude")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(mc.execCalls) != 1 || mc.execCalls[0].user != "root" || mc.execCalls[0].cmd != "pg_dump" {
+		t.Errorf("expected pre-backup exec call as root, got %v", mc.execCalls)
+	}
+}
+
 func TestRun_PreBackupFailsSkipsContainer(t *testing.T) {
 	mc := &mockClient{
 		containers: []container.Summary{
