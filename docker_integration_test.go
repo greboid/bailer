@@ -25,6 +25,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/docker/docker/api/types/container"
+	"github.com/docker/docker/api/types/mount"
 	"github.com/docker/docker/client"
 )
 
@@ -79,6 +81,9 @@ func populateVolume(t *testing.T, volume, generation string) {
 
 func runBailer(t *testing.T, binary string, env map[string]string) (int, string) {
 	t.Helper()
+	if env["MODE"] == "" {
+		env["MODE"] = "include"
+	}
 	cmd := exec.Command(binary, "-once")
 	cmd.Env = os.Environ()
 	for key, value := range env {
@@ -94,9 +99,37 @@ func runBailer(t *testing.T, binary string, env map[string]string) (int, string)
 	return code, string(output)
 }
 
+// testContainerLabel restricts bailer to this test's container, keeping
+// runs hermetic on a shared daemon.
+func testContainerLabel(t *testing.T) string {
+	t.Helper()
+	return "com.greboid.bailer.include=/data"
+}
+
+// removeStaleContainer force-removes any leftover container from a previous
+// test run before the name is reused.
+func removeStaleContainer(t *testing.T, name string) {
+	t.Helper()
+	_ = exec.Command("docker", "rm", "-f", name).Run()
+}
+
+// snapshotFilename computes the stable archive name the restic backend
+// stores for a test container mounting <volume>:/data.
+func snapshotFilename(containerName, volume string) string {
+	return stableArchiveName(BackupRequest{
+		ContainerName: containerName,
+		Mount: container.MountPoint{
+			Type:        mount.TypeVolume,
+			Name:        volume,
+			Destination: "/data",
+		},
+	})
+}
+
 func testVolume(t *testing.T) string {
 	t.Helper()
 	name := "bailer-test-" + strings.ToLower(strings.ReplaceAll(t.Name(), "/", "-"))
+	_ = exec.Command("docker", "volume", "rm", name).Run()
 	dockerRun(t, "volume", "create", name)
 	t.Cleanup(func() { _ = exec.Command("docker", "volume", "rm", name).Run() })
 	return name
@@ -110,7 +143,9 @@ func TestIntegration_Docker_ResticEndToEnd(t *testing.T) {
 
 	volume := testVolume(t)
 	populateVolume(t, volume, "1")
-	dockerRun(t, "run", "--rm", "--name", "bailer-e2e-app", "-v", volume+":/data", "busybox", "sleep", "300")
+	removeStaleContainer(t, "bailer-e2e-app")
+	dockerRun(t, "run", "-d", "--name", "bailer-e2e-app", "-v", volume+":/data",
+		"--label", testContainerLabel(t), "busybox", "sleep", "300")
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", "bailer-e2e-app").Run() })
 
 	code, output := runBailer(t, bailerBin, map[string]string{
@@ -133,7 +168,7 @@ func TestIntegration_Docker_ResticEndToEnd(t *testing.T) {
 	}
 
 	// Restoring must produce the exact volume content.
-	dumped := resticDump(t, resticBin, snapshots[0].ID, "bailer-e2e-app_appdata_data.tar")
+	dumped := resticDump(t, resticBin, snapshots[0].ID, snapshotFilename("bailer-e2e-app", volume))
 	verifyVolumeTar(t, dumped, "generation 1\n")
 }
 
@@ -152,7 +187,7 @@ func verifyVolumeTar(t *testing.T, data []byte, generation string) {
 		if err != nil {
 			t.Fatalf("reading tar: %v", err)
 		}
-		found[header.Name] = header
+		found[strings.TrimSuffix(header.Name, "/")] = header
 		if header.Typeflag == tar.TypeReg {
 			data, err := io.ReadAll(reader)
 			if err != nil {
@@ -195,7 +230,9 @@ func TestIntegration_Docker_ResticIncremental(t *testing.T) {
 
 	volume := testVolume(t)
 	populateVolume(t, volume, "1")
-	dockerRun(t, "run", "--rm", "--name", "bailer-e2e-inc", "-v", volume+":/data", "busybox", "sleep", "600")
+	removeStaleContainer(t, "bailer-e2e-inc")
+	dockerRun(t, "run", "-d", "--name", "bailer-e2e-inc", "-v", volume+":/data",
+		"--label", testContainerLabel(t), "busybox", "sleep", "600")
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", "bailer-e2e-inc").Run() })
 
 	env := map[string]string{
@@ -224,7 +261,7 @@ func TestIntegration_Docker_ResticIncremental(t *testing.T) {
 		t.Fatalf("expected 2 snapshots, got %d", len(snapshots))
 	}
 
-	dumped := resticDump(t, resticBin, "latest", "bailer-e2e-inc_appdata_data.tar")
+	dumped := resticDump(t, resticBin, "latest", snapshotFilename("bailer-e2e-inc", volume))
 	verifyVolumeTar(t, dumped, "generation 2\n")
 
 	if growth := sizeAfterSecond - sizeAfterFirst; growth > 1<<20 {
@@ -240,6 +277,13 @@ func TestIntegration_Docker_FailedRepositoryOperation(t *testing.T) {
 	// Point at a repository directory that does not exist and has not been
 	// initialised; bailer must report the failure with a non-zero exit.
 	missingRepo := filepath.Join(t.TempDir(), "missing-repo")
+
+	volume := testVolume(t)
+	populateVolume(t, volume, "1")
+	removeStaleContainer(t, "bailer-e2e-failrepo")
+	dockerRun(t, "run", "-d", "--name", "bailer-e2e-failrepo", "-v", volume+":/data",
+		"--label", testContainerLabel(t), "busybox", "sleep", "300")
+	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", "bailer-e2e-failrepo").Run() })
 
 	code, output := runBailer(t, bailerBin, map[string]string{
 		"BACKEND":           "restic",
@@ -262,8 +306,10 @@ func TestIntegration_Docker_HookOrderingAndFailure(t *testing.T) {
 	bailerBin := buildBailer(t)
 
 	volume := testVolume(t)
+	removeStaleContainer(t, "bailer-e2e-hooks")
 	dockerRun(t, "run", "-d", "--name", "bailer-e2e-hooks",
 		"-v", volume+":/data",
+		"--label", testContainerLabel(t),
 		"--label", "com.greboid.bailer.pre-backup-cmd=echo pre >> /data/hooklog",
 		"--label", "com.greboid.bailer.post-backup-cmd=echo post >> /data/hooklog",
 		"busybox", "sleep", "300")
@@ -286,7 +332,7 @@ func TestIntegration_Docker_HookOrderingAndFailure(t *testing.T) {
 
 	// Pre-hook ran before the backup, post-hook after: the log written into
 	// the volume and captured by the snapshot shows the order.
-	dumped := resticDump(t, resticBin, snapshots[0].ID, "bailer-e2e-hooks_appdata_data.tar")
+	dumped := resticDump(t, resticBin, snapshots[0].ID, snapshotFilename("bailer-e2e-hooks", volume))
 	if !strings.Contains(string(dumped), "pre") {
 		t.Error("expected pre-hook marker in snapshot")
 	}
@@ -304,8 +350,10 @@ func TestIntegration_Docker_PreHookFailureSkipsBackup(t *testing.T) {
 	bailerBin := buildBailer(t)
 
 	volume := testVolume(t)
+	removeStaleContainer(t, "bailer-e2e-prefail")
 	dockerRun(t, "run", "-d", "--name", "bailer-e2e-prefail",
 		"-v", volume+":/data",
+		"--label", testContainerLabel(t),
 		"--label", "com.greboid.bailer.pre-backup-cmd=false",
 		"--label", "com.greboid.bailer.post-backup-cmd=echo post >> /data/hooklog",
 		"busybox", "sleep", "300")
@@ -336,7 +384,9 @@ func TestIntegration_Docker_LocalBackendBackwardsCompatible(t *testing.T) {
 
 	volume := testVolume(t)
 	populateVolume(t, volume, "1")
-	dockerRun(t, "run", "--rm", "--name", "bailer-e2e-local", "-v", volume+":/data", "busybox", "sleep", "300")
+	removeStaleContainer(t, "bailer-e2e-local")
+	dockerRun(t, "run", "-d", "--name", "bailer-e2e-local", "-v", volume+":/data",
+		"--label", testContainerLabel(t), "busybox", "sleep", "300")
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", "bailer-e2e-local").Run() })
 
 	backupDir := t.TempDir()
@@ -378,19 +428,27 @@ func TestIntegration_Docker_CancellationLeavesNoChildren(t *testing.T) {
 	bailerBin := buildBailer(t)
 
 	volume := testVolume(t)
-	dockerRun(t, "run", "--rm", "--name", "bailer-e2e-cancel", "-v", volume+":/data", "busybox", "sh", "-c",
+	removeStaleContainer(t, "bailer-e2e-cancel")
+	dockerRun(t, "run", "-d", "--name", "bailer-e2e-cancel", "-v", volume+":/data",
+		"--label", testContainerLabel(t), "busybox", "sh", "-c",
 		"dd if=/dev/urandom of=/data/big.bin bs=1M count=64 2>/dev/null; sleep 600")
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", "bailer-e2e-cancel").Run() })
 
 	cmd := exec.Command(bailerBin, "-once")
 	cmd.Env = append(os.Environ(),
+		"MODE=include",
 		"BACKEND=restic",
 		"RESTIC_REPOSITORY="+t.TempDir(),
 		"RESTIC_PASSWORD="+testPassword,
 		"RESTIC_BIN="+resticBin,
 	)
-	output, _ := cmd.CombinedOutput()
-	_ = output // retained for debugging on failure
+	var output bytes.Buffer
+	cmd.Stdout = &output
+	cmd.Stderr = &output
+
+	if err := cmd.Start(); err != nil {
+		t.Fatalf("starting bailer: %v", err)
+	}
 
 	time.Sleep(500 * time.Millisecond)
 	if err := cmd.Process.Signal(syscall.SIGTERM); err != nil {
@@ -426,7 +484,9 @@ func TestIntegration_Docker_ExportVolumeSubcommand(t *testing.T) {
 
 	volume := testVolume(t)
 	populateVolume(t, volume, "1")
-	dockerRun(t, "run", "--rm", "--name", "bailer-e2e-export", "-v", volume+":/data", "busybox", "sleep", "300")
+	removeStaleContainer(t, "bailer-e2e-export")
+	dockerRun(t, "run", "-d", "--name", "bailer-e2e-export", "-v", volume+":/data",
+		"busybox", "sleep", "300")
 	t.Cleanup(func() { _ = exec.Command("docker", "rm", "-f", "bailer-e2e-export").Run() })
 
 	containerID := dockerRun(t, "inspect", "-f", "{{.Id}}", "bailer-e2e-export")
