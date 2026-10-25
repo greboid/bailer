@@ -267,12 +267,7 @@ pinned in the `Dockerfile` via `RESTIC_VERSION` with per-architecture SHA256 che
 
 ```bash
 go test ./...                                    # unit tests
-go test -tags integration ./...                  # restic integration tests (needs restic in PATH)
-go test -tags integration -run TestIntegration_Docker ./...   # Docker E2E tests (needs a Docker daemon)
 ```
-
-The restic integration tests use a temporary local repository; no BorgBase account is required. Docker E2E tests skip
-automatically when no Docker daemon is reachable.
 
 ## Known limitations
 
