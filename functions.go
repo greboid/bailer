@@ -63,6 +63,7 @@ func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
 				image, hasImage := c.Labels[labelHelperImage]
 				if !hasImage {
 					log.Error("Helper pre-backup command set but no helper image, skipping container")
+					errs = append(errs, fmt.Errorf("%s: helper pre-backup command set but no helper image", name))
 					continue
 				}
 				if cmd, ok := c.Labels[labelPreBackupCmd]; ok {
@@ -71,12 +72,14 @@ func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
 				log.Info("Running helper pre-backup command", "image", image, "cmd", argv)
 				if err := runHelper(ctx, cli, name, image, argv, c.Mounts); err != nil {
 					log.Error("Helper pre-backup command failed, skipping container", "error", err)
+					errs = append(errs, fmt.Errorf("%s: helper pre-backup command: %w", name, err))
 					continue
 				}
 			} else if cmd, ok := c.Labels[labelPreBackupCmd]; ok {
 				log.Info("Running pre-backup command", "cmd", cmd)
 				if err := cli.execCommand(ctx, c.ID, cmd); err != nil {
 					log.Error("Pre-backup command failed, skipping container", "error", err)
+					errs = append(errs, fmt.Errorf("%s: pre-backup command: %w", name, err))
 					continue
 				}
 			}
@@ -96,6 +99,7 @@ func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
 				image, hasImage := c.Labels[labelHelperImage]
 				if !hasImage {
 					log.Error("Helper post-backup command set but no helper image")
+					errs = append(errs, fmt.Errorf("%s: helper post-backup command set but no helper image", name))
 				} else {
 					if cmd, ok := c.Labels[labelPostBackupCmd]; ok {
 						log.Debug("Helper post-backup command set, skipping exec post-backup command", "cmd", cmd)
@@ -103,12 +107,14 @@ func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
 					log.Info("Running helper post-backup command", "image", image, "cmd", argv)
 					if err := runHelper(ctx, cli, name, image, argv, c.Mounts); err != nil {
 						log.Error("Helper post-backup command failed", "error", err)
+						errs = append(errs, fmt.Errorf("%s: helper post-backup command: %w", name, err))
 					}
 				}
 			} else if cmd, ok := c.Labels[labelPostBackupCmd]; ok {
 				log.Info("Running post-backup command", "cmd", cmd)
 				if err := cli.execCommand(ctx, c.ID, cmd); err != nil {
 					log.Error("Post-backup command failed", "error", err)
+					errs = append(errs, fmt.Errorf("%s: post-backup command: %w", name, err))
 				}
 			}
 		}

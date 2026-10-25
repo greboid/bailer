@@ -336,8 +336,11 @@ func TestRun_HelperPreWithoutImageSkipsContainer(t *testing.T) {
 	}
 
 	err := run(context.Background(), mc, t.TempDir(), "exclude")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when helper image is missing")
+	}
+	if !strings.Contains(err.Error(), "no helper image") {
+		t.Errorf("expected aggregated helper image failure, got: %v", err)
 	}
 	if len(mc.createCalls) != 0 {
 		t.Errorf("expected no helper creation, got %v", mc.createCalls)
@@ -356,8 +359,11 @@ func TestRun_HelperPostWithoutImageLogsButBacksUp(t *testing.T) {
 	}
 
 	err := run(context.Background(), mc, t.TempDir(), "exclude")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when helper image is missing")
+	}
+	if !strings.Contains(err.Error(), "no helper image") {
+		t.Errorf("expected aggregated helper image failure, got: %v", err)
 	}
 	if len(mc.copyCalls) != 2 {
 		t.Errorf("expected backup to still run, got %d copy calls", len(mc.copyCalls))
@@ -380,8 +386,11 @@ func TestRun_HelperPreFailureSkipsContainer(t *testing.T) {
 	}
 
 	err := run(context.Background(), mc, t.TempDir(), "exclude")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when helper pre-backup fails")
+	}
+	if !strings.Contains(err.Error(), "helper pre-backup command") {
+		t.Errorf("expected aggregated helper pre-backup failure, got: %v", err)
 	}
 	if len(mc.copyCalls) != 0 {
 		t.Error("expected container to be skipped when helper pre-backup fails")
@@ -401,8 +410,11 @@ func TestRun_HelperPostFailureDoesNotBlock(t *testing.T) {
 	}
 
 	err := run(context.Background(), mc, t.TempDir(), "exclude")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when helper post-backup fails")
+	}
+	if !strings.Contains(err.Error(), "helper post-backup command") {
+		t.Errorf("expected aggregated helper post-backup failure, got: %v", err)
 	}
 	if len(mc.copyCalls) != 2 {
 		t.Error("expected backup to complete even when helper post-backup fails")

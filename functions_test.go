@@ -387,8 +387,11 @@ func TestRun_PreBackupFailsSkipsContainer(t *testing.T) {
 		execErrs: map[string]error{"fail_cmd": errors.New("command failed")},
 	}
 	err := run(context.Background(), mc, t.TempDir(), "exclude")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when pre-backup fails")
+	}
+	if !strings.Contains(err.Error(), "pre-backup command") {
+		t.Errorf("expected aggregated pre-backup failure, got: %v", err)
 	}
 	if len(mc.copyCalls) != 0 {
 		t.Error("expected no copy calls when pre-backup fails")
@@ -441,8 +444,11 @@ func TestRun_PostBackupFailureDoesNotBlock(t *testing.T) {
 		execErrs: map[string]error{"fail_cleanup": errors.New("cleanup failed")},
 	}
 	err := run(context.Background(), mc, t.TempDir(), "exclude")
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("expected error when post-backup fails")
+	}
+	if !strings.Contains(err.Error(), "post-backup command") {
+		t.Errorf("expected aggregated post-backup failure, got: %v", err)
 	}
 	if len(mc.copyCalls) != 1 {
 		t.Error("expected backups to complete even when post-backup fails")
