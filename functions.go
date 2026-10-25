@@ -3,6 +3,7 @@ package main
 import (
 	"compress/gzip"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -38,6 +39,8 @@ func runDaemon(ctx context.Context, cli dockerAPI, backupDir, mode string, inter
 }
 
 func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
+	var errs []error
+
 	containers, err := cli.listContainers(ctx)
 	if err != nil {
 		return fmt.Errorf("listing containers: %w", err)
@@ -84,6 +87,7 @@ func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
 			volLog.Info("Backing up volume")
 			if err := backupVolume(ctx, cli, c.ID, name, backupDir, vol); err != nil {
 				volLog.Error("Failed to backup volume", "error", err)
+				errs = append(errs, fmt.Errorf("%s: %w", name, err))
 			}
 		}
 
@@ -110,7 +114,7 @@ func run(ctx context.Context, cli dockerAPI, backupDir, mode string) error {
 		}
 	}
 
-	return nil
+	return errors.Join(errs...)
 }
 
 func dryRunMode(ctx context.Context, cli dockerAPI, mode string) error {

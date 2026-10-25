@@ -203,6 +203,34 @@ func TestRun_NoContainers(t *testing.T) {
 	}
 }
 
+func TestRun_VolumeFailure(t *testing.T) {
+	mc := &mockClient{
+		containers: []container.Summary{
+			{
+				ID:     "container123456",
+				State:  "stopped",
+				Names:  []string{"/app"},
+				Labels: map[string]string{},
+				Mounts: []container.MountPoint{
+					{Type: mount.TypeVolume, Name: "vol1", Destination: "/data", RW: true},
+					{Type: mount.TypeVolume, Name: "vol2", Destination: "/data", RW: true},
+				},
+			},
+		},
+		copyErrs: map[string]error{"/data": errors.New("copy failed")},
+	}
+	err := run(context.Background(), mc, t.TempDir(), "exclude")
+	if err == nil {
+		t.Fatal("expected error when a volume backup fails")
+	}
+	if !strings.Contains(err.Error(), "copy failed") {
+		t.Errorf("expected joined error to include copy failure, got: %v", err)
+	}
+	if len(mc.copyCalls) != 2 {
+		t.Errorf("expected all volumes attempted despite failures, got %d copies", len(mc.copyCalls))
+	}
+}
+
 func TestRun_BackupsStoppedContainer(t *testing.T) {
 	mc := &mockClient{
 		containers: []container.Summary{
