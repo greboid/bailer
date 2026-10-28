@@ -23,7 +23,7 @@ RUN apk add --no-cache curl bzip2 \
     && bunzip2 /tmp/restic.bz2 \
     && chmod 0755 /tmp/restic
 
-FROM ghcr.io/greboid/dockerbase/root:1.20261020.1
+FROM ghcr.io/greboid/dockerbase/root:1.20261021.0
 
 COPY --from=builder /app/main /bailer
 COPY --from=builder /tmp/restic /usr/local/bin/restic
