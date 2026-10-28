@@ -17,10 +17,10 @@ import (
 )
 
 // runExportCommand implements the internal `bailer export-volume` entry point
-// used by the restic backend. It writes an uncompressed tar stream of the
-// given container path to stdout and nothing else: all diagnostics go to
-// stderr, so the stream is always pure tar data. It exits non-zero on any
-// failure and never runs pre/post hooks or a backup pass.
+// used by the tar mode of the restic backend. It writes an uncompressed tar
+// stream of the given container path to stdout and nothing else: all
+// diagnostics go to stderr, so the stream is always pure tar data. It exits
+// non-zero on any failure and never runs pre/post hooks or a backup pass.
 func runExportCommand(args []string) int {
 	fs := flag.NewFlagSet("export-volume", flag.ContinueOnError)
 	fs.SetOutput(os.Stderr)

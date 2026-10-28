@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/csmith/envflag/v2"
@@ -36,6 +37,7 @@ var (
 	backend    = flag.String("backend", "local", "Backup backend: local or restic")
 	resticBin  = flag.String("restic-bin", "restic", "Path to the restic binary")
 	resticHost = flag.String("restic-host", "", "Host identity used for restic snapshots (defaults to the machine hostname)")
+	resticMode = flag.String("restic-mode", "tar", "Restic snapshot layout: tar (streamed archive per volume) or files (individual files, staged under the backup directory)")
 )
 
 func main() {
@@ -56,7 +58,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	if err := validateBackend(*backend, *resticBin, exec.LookPath); err != nil {
+	if err := validateBackend(*backend, *resticBin, *resticMode, *backupDir, exec.LookPath); err != nil {
 		slog.Error("Invalid backend configuration", "error", err)
 		os.Exit(1)
 	}
@@ -70,7 +72,7 @@ func main() {
 
 	cli := dockerClient{rawCli}
 
-	backendImpl, err := newBackend(*backend, cli, *backupDir, *resticBin, *resticHost)
+	backendImpl, err := newBackend(*backend, cli, *backupDir, *resticBin, *resticHost, *resticMode)
 	if err != nil {
 		slog.Error("Failed to create backup backend", "error", err)
 		os.Exit(1)
@@ -104,7 +106,7 @@ func main() {
 
 // newBackend resolves the selected backend. Repository configuration is read
 // from the standard restic environment variables by the restic binary itself.
-func newBackend(name string, cli dockerAPI, backupDirName, resticBinName, host string) (BackupBackend, error) {
+func newBackend(name string, cli dockerAPI, backupDirName, resticBinName, host, resticModeName string) (BackupBackend, error) {
 	switch name {
 	case "local":
 		return &LocalTarBackend{cli: cli, backupDir: backupDirName}, nil
@@ -116,11 +118,28 @@ func newBackend(name string, cli dockerAPI, backupDirName, resticBinName, host s
 			}
 			host = hostname
 		}
-		selfPath, err := os.Executable()
-		if err != nil {
-			return nil, fmt.Errorf("resolving bailer executable for export-volume: %w", err)
+		mode := resticModeName
+		if mode == "" {
+			mode = resticModeTar
 		}
-		return &ResticBackend{cli: cli, resticBin: resticBinName, host: host, selfPath: selfPath}, nil
+		backend := &ResticBackend{
+			cli:       cli,
+			resticBin: resticBinName,
+			host:      host,
+			mode:      mode,
+			// Files mode stages under the backup directory, in its own
+			// subtree so it never mixes with local-mode archives.
+			stagingDir: filepath.Join(backupDirName, "staging"),
+		}
+		if backend.mode == resticModeTar {
+			// Only tar mode spawns the export-volume subcommand.
+			selfPath, err := os.Executable()
+			if err != nil {
+				return nil, fmt.Errorf("resolving bailer executable for export-volume: %w", err)
+			}
+			backend.selfPath = selfPath
+		}
+		return backend, nil
 	default:
 		return nil, fmt.Errorf("unknown backend %q, must be 'local' or 'restic'", name)
 	}

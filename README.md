@@ -6,7 +6,7 @@ Docker volume backup tool. Backs up container volumes with filtering and pre/pos
 
 | Flag          | Env Var        | Default    | Description                                           |
 |---------------|----------------|------------|-------------------------------------------------------|
-| `-backup-dir` | `BACKUP_DIR`   | `/backups` | Directory to store backups (local backend)            |
+| `-backup-dir` | `BACKUP_DIR`   | `/backups` | Directory to store backups (local backend); restic `files` mode stages under `<backup-dir>/staging` |
 | `-mode`       | `MODE`         | `exclude`  | Volume filtering mode: `exclude` or `include`         |
 | `-once`       | `ONCE`         | `false`    | Run a single backup pass and exit                     |
 | `-dry-run`    | `DRY_RUN`      | `false`    | Show what would be backed up without taking action    |
@@ -14,6 +14,7 @@ Docker volume backup tool. Backs up container volumes with filtering and pre/pos
 | `-backend`    | `BACKEND`      | `local`    | Backup backend: `local` or `restic`                   |
 | `-restic-bin` | `RESTIC_BIN`   | `restic`   | Path to the restic binary                             |
 | `-restic-host`| `RESTIC_HOST`  | hostname   | Host identity stored in restic snapshots              |
+| `-restic-mode`| `RESTIC_MODE`  | `tar`      | Restic snapshot layout: `tar` (streamed archive) or `files` (individual files, staged under the backup directory) |
 
 ## Backup config
 
@@ -100,7 +101,14 @@ Bailer validates the backend selection, the restic binary and the repository con
 backup pass, but never initialises the repository or manages credentials. Create the repository once with
 `restic init` yourself.
 
-Per-volume snapshots are created with:
+### Snapshot layouts
+
+Two snapshot layouts are available via `RESTIC_MODE`; tags, `--host` and repository configuration are identical
+for both, so filtering and retention work the same way.
+
+**`tar` (default)** — each volume is streamed as a single uncompressed tar archive straight into the `restic`
+binary via `--stdin-from-command`. No intermediate archive files are created and no gzip is applied before restic,
+which compresses and encrypts the stream itself:
 
 ```bash
 restic backup \
@@ -114,11 +122,40 @@ restic backup \
   -- /bailer export-volume --container-id <id> --path /data
 ```
 
-The `--host` value identifies the Docker host (configurable via `RESTIC_HOST`, defaulting to the hostname). Snapshot
-identity is stable: the stored filename is derived from the container name, volume/mount identifier and mount
-destination — never from a timestamp — so the same mount maps to the same name across backups. Container and volume
-names are **not** globally unique across hosts; keep one repository per host or rely on `--host` for grouping and
-always filter snapshots by host.
+**`files`** (`RESTIC_MODE=files`) — each volume is extracted to a staging directory under the backup directory
+(`<backup-dir>/staging/<mount>/<basename>`) and restic snapshots the individual files:
+
+```bash
+restic backup \
+  --host <host> \
+  --tag bailer \
+  --tag container:myapp \
+  --tag volume:appdata \
+  --tag path:/data \
+  /backups/staging/myapp_appdata__data/data
+```
+
+Restic cannot ingest a multi-file stream, so files mode always stages a full copy of the volume on disk first
+(there is no way to untar on the fly into restic). Choosing between the modes:
+
+- Files mode deduplicates per file: changing one file in a large volume only uploads that file's changed chunks,
+  whereas a tar stream shifts every byte after the change and re-uploads nearly the whole volume. Files-mode
+  snapshots are also browsable and restorable natively (`restic ls`, `restic restore`, `restic mount`).
+- Files mode needs free disk space roughly equal to each volume, in the same filesystem as `-backup-dir` (point
+  that at a real mounted filesystem when running as a container); the staged copy is I/O the tar mode does not pay.
+- Files mode reads the volume twice over its lifetime (once to stage, once by restic); tar mode reads it once.
+- The staging path is deterministic per mount, so restic finds the previous snapshot as its incremental parent and
+  unchanged files are not re-read. The staged copy is removed after each run.
+- Staging preserves permissions and modification times, and ownership when bailer runs as root; device nodes and
+  FIFOs are skipped with a warning. Tar mode stores whatever Docker's export produces, including special files.
+- In files mode the snapshot's top-level directory is the mount destination's base name (the same layout as inside
+  the tar archives): exporting `/data` yields a snapshot containing `data/...`.
+
+The `--host` value identifies the Docker host (configurable via `RESTIC_HOST`, defaulting to the hostname). Mount
+identity is stable: the tar filename (or files-mode staging directory) is derived from the container name,
+volume/mount identifier and mount destination — never from a timestamp — so the same mount maps to the same name
+across backups. Container and volume names are **not** globally unique across hosts; keep one repository per host or
+rely on `--host` for grouping and always filter snapshots by host.
 
 Note that restic tags are for filtering only; they do not automatically define retention groups. Run `restic forget`
 explicitly if you want retention, e.g. `restic forget --tag bailer --keep-daily 7 --keep-weekly 4`.
@@ -201,6 +238,20 @@ Bailer does not modify production volumes during restore. Restores are manual, p
    restic snapshots --host <hostname> --tag container:myapp
    ```
 
+**Files-mode snapshots** (`RESTIC_MODE=files`) contain the individual files, so restic restores them directly. The
+snapshot's top-level directory is the base name of the mount destination (exporting `/data` yields `data/...`), so
+restore that subpath into a fresh volume:
+
+   ```bash
+   docker volume create myapp_data_restored
+   RESTIC_REPOSITORY='rest:...' RESTIC_PASSWORD_FILE=./secrets/restic_password \
+     restic restore <snapshot-id>:/data --target /var/lib/docker/volumes/myapp_data_restored/_data
+   ```
+
+   Restoring non-root ownership requires running the restore as root. Verify the contents as in steps 6–7 below.
+
+**Tar-mode snapshots** store a single archive per volume, which is dumped and extracted manually:
+
 3. Dump the stored tar stream to a file. The archive was created by Docker's
    [CopyFromContainer](https://docs.docker.com/reference/api/engine/#copy-files-or-folders-from-a-container),
    so its entries are rooted at the **base name of the mount destination**: exporting `/data` yields a top-level
@@ -255,9 +306,9 @@ a consistent file into the volume, and accept that streaming adds delay between 
 ## The export-volume subcommand
 
 `bailer export-volume --container-id <id> --path /data` streams an uncompressed tar of the given container path to
-stdout. It is an internal building block used by the restic backend and is not a general-purpose export API: the path
-must be canonical and absolute, the container root filesystem is refused, hooks never run, and diagnostics go only to
-stderr so the stdout stream is always pure tar data. It exits non-zero on any failure.
+stdout. It is an internal building block used by the tar mode of the restic backend and is not a general-purpose
+export API: the path must be canonical and absolute, the container root filesystem is refused, hooks never run, and
+diagnostics go only to stderr so the stdout stream is always pure tar data. It exits non-zero on any failure.
 
 ## Image contents
 
@@ -280,3 +331,5 @@ go test ./...                                    # unit tests
 - Pre-backup hooks give a short consistency window only (see the caveat above).
 - Restic snapshot identity depends on container names; recreating a container under a new name starts a new filename
   (old snapshots remain intact and tags still group them by volume).
+- In restic `files` mode, staging needs free disk space roughly equal to each volume; special files (device nodes,
+  FIFOs) are skipped, and ownership is only preserved when bailer runs as root.
